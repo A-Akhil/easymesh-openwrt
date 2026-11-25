@@ -7,7 +7,7 @@ PKG_RELEASE:=1
 
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
-# PKG_MAINTAINER must be "Name <email>" before submitting upstream
+PKG_MAINTAINER:=Akhil Arul <akhilarul324@gmail.com>
 
 include $(INCLUDE_DIR)/package.mk
 

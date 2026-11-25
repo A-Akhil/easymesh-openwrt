@@ -6,7 +6,7 @@ LUCI_DEPENDS:=+luci-base +rpcd-mod-ucode +easymesh-agent
 LUCI_PKGARCH:=all
 
 PKG_LICENSE:=GPL-2.0-only
-# PKG_MAINTAINER must be "Name <email>" before submitting upstream
+LUCI_MAINTAINER:=Akhil Arul <akhilarul324@gmail.com>
 
 # inside the openwrt/luci tree this is "include ../../luci.mk"
 include $(TOPDIR)/feeds/luci/luci.mk
