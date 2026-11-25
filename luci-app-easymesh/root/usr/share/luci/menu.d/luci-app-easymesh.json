@@ -1,0 +1,13 @@
+{
+	"admin/network/easymesh": {
+		"title": "EasyMesh",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "easymesh/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-easymesh" ]
+		}
+	}
+}

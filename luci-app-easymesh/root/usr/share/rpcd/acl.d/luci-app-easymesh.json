@@ -1,0 +1,13 @@
+{
+	"luci-app-easymesh": {
+		"description": "Grant access to EasyMesh agent status and pairing",
+		"read": {
+			"ubus": { "luci.easymesh": [ "status" ] },
+			"uci": [ "easymesh" ]
+		},
+		"write": {
+			"ubus": { "luci.easymesh": [ "pair", "pair_stop", "restart" ] },
+			"uci": [ "easymesh" ]
+		}
+	}
+}

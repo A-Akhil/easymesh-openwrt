@@ -1,0 +1,82 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# EasyMesh pairing for OpenWrt: run this, then on the controller choose "Add Mesh Device" > WPS (or press
+# its WPS button). This router answers as a Multi-AP backhaul STA, receives the backhaul credentials,
+# connects at once (hidden backhaul) and the easymesh agent finishes the join; the agent stores the
+# credentials in UCI from the controller's M2. Nothing secret is printed.
+# Usage: easymesh-pair [max-seconds]        Progress: /tmp/easymesh/pair.log, state: /tmp/easymesh/pair.state
+MAX=${1:-300}
+DIR=/tmp/easymesh; mkdir -p "$DIR"
+LOG=$DIR/pair.log; STATE=$DIR/pair.state
+exec >>"$LOG" 2>&1
+log() { echo "$(date +%T) $*"; }
+state() { echo "$1" > "$STATE"; }
+
+SEC=$(uci -q get easymesh.agent.bsta); SEC=${SEC:-em_bsta}
+NET=$(uci -q get easymesh.agent.network); NET=${NET:-lan}
+BSSID=$(uci -q get easymesh.agent.controller_bssid)
+state running
+log "pairing started (backhaul STA section wireless.$SEC, up to ${MAX}s)"
+
+# create the backhaul STA on the first 5 GHz radio if it does not exist yet
+if [ -z "$(uci -q get wireless.$SEC)" ]; then
+	RADIO=$(uci show wireless | sed -n "s/^wireless\.\([^.]*\)\.band='5g'$/\1/p" | head -1)
+	[ -n "$RADIO" ] || { log "no 5 GHz radio found"; state failed; exit 1; }
+	uci batch <<U
+set wireless.$SEC=wifi-iface
+set wireless.$SEC.device='$RADIO'
+set wireless.$SEC.mode='sta'
+set wireless.$SEC.network='$NET'
+set wireless.$SEC.multi_ap='1'
+set wireless.$SEC.wds='1'
+set wireless.$SEC.ssid='easymesh-pairing'
+set wireless.$SEC.encryption='none'
+U
+	uci commit wireless
+	log "created wireless.$SEC on $RADIO; reloading Wi-Fi"
+	wifi reload
+	sleep 8
+fi
+/etc/init.d/easymesh running >/dev/null 2>&1 || /etc/init.d/easymesh start
+
+IF=""
+for i in $(seq 1 20); do
+	IF=$(ubus call network.wireless status | jsonfilter -e "@[*].interfaces[@.section='$SEC'].ifname" | head -1)
+	[ -n "$IF" ] && ubus list "wpa_supplicant.$IF" >/dev/null 2>&1 && break
+	sleep 1
+done
+[ -n "$IF" ] || { log "backhaul STA interface not up"; state failed; exit 1; }
+
+ctl() { ubus call "wpa_supplicant.$IF" control "{\"command\":\"$1\"}" 2>/dev/null | jsonfilter -e '@.result'; }
+known=" $(ctl LIST_NETWORKS | awk 'NR>1{print $1}' | tr '\n' ' ') "
+log "ready on $IF: now open Add Mesh Device > WPS on the controller${BSSID:+ ($BSSID)}"
+start=$(date +%s); last=0
+while :; do
+	now=$(date +%s)
+	if [ $((now - start)) -ge "$MAX" ]; then ctl WPS_CANCEL >/dev/null; log "timeout, nothing paired"; state timeout; exit 1; fi
+	[ -f "$DIR/pair.stop" ] && { rm -f "$DIR/pair.stop"; ctl WPS_CANCEL >/dev/null; log "stopped"; state stopped; exit 1; }
+	if [ $((now - last)) -ge 115 ]; then
+		log "WPS window: $(ctl "WPS_PBC ${BSSID:-any} multi_ap=1")"
+		last=$now
+	fi
+	for id in $(ctl LIST_NETWORKS | awk 'NR>1{print $1}'); do
+		case "$known" in *" $id "*) continue ;; esac
+		# while PBC runs the supplicant holds a temporary WPS session entry (key_mgmt WPS): not credentials
+		case "$(ctl "GET_NETWORK $id key_mgmt")" in *WPS*|FAIL*|"") continue ;; esac
+		ssid=$(ctl "GET_NETWORK $id ssid" | sed 's/^"//; s/"$//')
+		[ -z "$ssid" ] && continue
+		log "credentials received (backhaul ssid $(echo "$ssid" | cut -c1-8)...)"
+		ctl "SET_NETWORK $id scan_ssid 1" >/dev/null
+		ctl "SELECT_NETWORK $id" >/dev/null
+		for i in $(seq 1 20); do
+			case "$(ctl STATUS)" in *wpa_state=COMPLETED*)
+				log "connected to the backhaul (4addr: $(iw dev "$IF" info | sed -n 's/.*4addr: //p')); the agent completes the join"
+				state paired; exit 0 ;;
+			esac
+			sleep 1
+		done
+		log "credentials received but the backhaul did not connect within 20 s"
+		state failed; exit 2
+	done
+	sleep 1
+done
